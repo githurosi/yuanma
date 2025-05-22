@@ -27,7 +27,7 @@ jobs:
       - name: 安装依赖
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y wget jq unzip # 移除翻译工具（如需翻译可保留translate-shell）
+          sudo apt-get install -y wget jq unzip 
 
       - name: 创建资产目录（未混淆）
         run: mkdir -p 未混淆 # 创建指定名称文件夹
@@ -43,6 +43,8 @@ jobs:
           response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           TAG_NAME=$(echo "$response" | jq -r '.tag_name')
           ASSETS=($(echo "$response" | jq -r '.assets[].name'))
+          echo "本次获取到的版本号TAG_NAME: $TAG_NAME"
+          echo "本次获取到的资产列表ASSETS: ${ASSETS[*]}"
 
           for asset in "${ASSETS[@]}"; do
             DOWNLOAD_URL=$(echo "$response" | jq -r ".assets[] | select(.name == \"$asset\") | .browser_download_url")
@@ -69,6 +71,9 @@ jobs:
           LOCAL_VERSION=$(cat version.txt 2>/dev/null || echo "")
           TAG_NAME=${{ steps.download-assets.outputs.TAG_NAME }}
           ASSETS=${{ steps.download-assets.outputs.ASSETS }}
+          echo "本地版本号LOCAL_VERSION: $LOCAL_VERSION"
+          echo "获取的版本号TAG_NAME: $TAG_NAME"
+          echo "获取的资产列表ASSETS: $ASSETS"
 
           # 版本对比
           if [ "$LOCAL_VERSION" = "$TAG_NAME" ] && [ "$FORCE_UPDATE" != "true" ]; then
@@ -102,8 +107,14 @@ jobs:
             🔄 同步资产到未混淆目录 & 更新主页
             版本: ${TAG_NAME}
             资产: ${ASSETS}
-          files: |
-            未混淆/        # 资产目录
-            README.md      # 主页日志
-            version.txt    # 版本文件（可选）
-            temp_homepage.md # 主页克隆副本（可选保留）
+          branch: main
+          # 移除可能导致问题的多余参数，只保留必要参数
+          add_options: ""
+          status_options: ""
+          file_pattern: ""
+          commit_options: ""
+          tagging_message: ""
+          push_options: ""
+          commit_user_name: github-actions[bot]
+          commit_user_email: 41898282+github-actions[bot]@users.noreply.github.com
+          commit_author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
