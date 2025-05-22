@@ -1,0 +1,109 @@
+name: 同步资产、更新日志与主页（未混淆版）
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: "0 1 * * *" # UTC+8凌晨1点
+  workflow_dispatch:
+    inputs:
+      force_update:
+        description: '是否强制更新（忽略版本检查）'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1 # 浅克隆加速
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y wget jq unzip # 移除翻译工具（如需翻译可保留translate-shell）
+
+      - name: 创建资产目录（未混淆）
+        run: mkdir -p 未混淆 # 创建指定名称文件夹
+
+      - name: 下载最新资产到未混淆目录
+        id: download-assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          REPO_OWNER="bia-pain-bache"          # 目标仓库所有者
+          REPO_NAME="BPB-Worker-Panel"         # 目标仓库名
+          response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
+          TAG_NAME=$(echo "$response" | jq -r '.tag_name')
+          ASSETS=($(echo "$response" | jq -r '.assets[].name'))
+
+          for asset in "${ASSETS[@]}"; do
+            DOWNLOAD_URL=$(echo "$response" | jq -r ".assets[] | select(.name == \"$asset\") | .browser_download_url")
+            wget -q --show-progress "$DOWNLOAD_URL" -O "未混淆/$asset" # 路径指定为未混淆/
+            echo "已下载资产到未混淆目录: $asset"
+          done
+
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "ASSETS=$(echo ${ASSETS[*]})" >> $GITHUB_OUTPUT
+
+      - name: 克隆目标仓库主页
+        id: clone-homepage
+        run: |
+          REPO_OWNER="bia-pain-bache"          # 目标仓库所有者（与资产仓库一致或不同）
+          REPO_NAME="BPB-Worker-Panel"         # 目标仓库名
+          curl -s https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/README.md > temp_homepage.md
+          echo "已克隆主页内容到temp_homepage.md"
+
+      - name: 同步更新日志与主页内容
+        id: update-log
+        run: |
+          set -euo pipefail
+          FORCE_UPDATE=${{ github.event.inputs.force_update || 'false' }}
+          LOCAL_VERSION=$(cat version.txt 2>/dev/null || echo "")
+          TAG_NAME=${{ steps.download-assets.outputs.TAG_NAME }}
+          ASSETS=${{ steps.download-assets.outputs.ASSETS }}
+
+          # 版本对比
+          if [ "$LOCAL_VERSION" = "$TAG_NAME" ] && [ "$FORCE_UPDATE" != "true" ]; then
+            echo "✅ 已是最新版本（$TAG_NAME），仅同步主页"
+          fi
+
+          # 构建资产日志（排第一）
+          ASSET_LOG=$(echo -e "## 📦 资产更新日志（未混淆目录）\n### $TAG_NAME\n资产文件: $ASSETS")
+          
+          # 处理主页内容（排第二，调整标题层级）
+          HOMEPAGE_CONTENT=$(cat temp_homepage.md | sed 's/^# /# 🌐 项目主页 - /g; s/## /### /g')
+          MAIN_CONTENT=$(echo -e "$ASSET_LOG\n\n$HOMEPAGE_CONTENT")
+
+          # 写入主页（强制覆盖或追加）
+          if [ "$FORCE_UPDATE" = "true" ] || [ ! -f "README.md" ]; then
+            echo -e "$MAIN_CONTENT" > README.md
+          else
+            echo -e "\n\n$MAIN_CONTENT" >> README.md
+          fi
+
+          # 更新版本号（仅在版本变更时执行）
+          if [ "$LOCAL_VERSION" != "$TAG_NAME" ] || [ "$FORCE_UPDATE" = "true" ]; then
+            echo "$TAG_NAME" > version.txt
+          fi
+
+      - name: 提交所有文件
+        if: always()
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: |
+            🔄 同步资产到未混淆目录 & 更新主页
+            版本: ${TAG_NAME}
+            资产: ${ASSETS}
+          files: |
+            未混淆/        # 资产目录
+            README.md      # 主页日志
+            version.txt    # 版本文件（可选）
+            temp_homepage.md # 主页克隆副本（可选保留）
